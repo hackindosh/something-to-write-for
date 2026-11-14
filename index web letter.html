@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>if you can read this? 🐧</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐧</text></svg>">
+
+  <!-- p5.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+
+  <!-- Bold ASCII / Pixel / Terminal Monospace Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=VT323&family=JetBrains+Mono:wght@700;800&display=swap" rel="stylesheet">
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      min-height: 100%;
+      background-color: steelblue;
+      overflow-x: hidden;
+      cursor: crosshair;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    /* Subtle paper grain overlay so the p5 color bands feel tactile and warm */
+    .paper-grain {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      opacity: 0.035;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    }
+  </style>
+</head>
+<body>
+
+  <div class="paper-grain"></div>
+
+  <script>
+    // ============================================================================
+    // 1. REPLACE YOUR TEXT HERE!
+    // Simply paste or type your own paragraphs inside the backticks (` `) below.
+    // Blank lines create paragraph breaks automatically.
+    // ============================================================================
+    const MY_TEXT = `if you can read this, the letters are listening.
+
+move your cursor across any sentence on this page and watch each character ripple, drift, and settle back into place over a living color spectrum.
+
+this entire space is yours — just open index.html, replace the text inside MY_TEXT at the very top of the script with your own words, and publish it directly to your github repository.
+
+(double-click anywhere on the page to switch between elastic ripple, wave float, and magnetic swirl physics.)`;
+
+    // ============================================================================
+    // 2. TYPOGRAPHY & PHYSICS SETTINGS
+    // ============================================================================
+    const CONFIG = {
+      fontFamily: 'Silkscreen',       // Bold bitmap/ASCII pixel typeface (or try 'VT323' or 'JetBrains Mono')
+      fontWeight: 700,                // Bold weight for crisp blocky ASCII presence
+      asciiChars: ['@', '#', '%', '*', '+', '=', ':', '~', '?'], // ASCII glyphs flashed during strong motion
+      repelRadius: 135,               // How far the cursor reaches
+      repelStrength: 3.4,             // How strongly letters react to the cursor
+      springStiffness: 0.085,         // How quickly letters snap back into place
+      damping: 0.82                   // Smoothness of the motion (0.75 - 0.90)
+    };
+
+    // ============================================================================
+    // P5.JS FULL-PAGE COLOR SPECTRUM + ROTATE + KINETIC TEXT ENGINE
+    // ============================================================================
+    let glyphs = [];
+    let kineticMode = 0; // 0 = Elastic Ripple, 1 = Wave Float, 2 = Magnetic Swirl
+    let fontLoaded = false;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      textFont(CONFIG.fontFamily);
+      textStyle(BOLD);
+
+      // Wait briefly for Google Fonts to finish loading so character widths are exact
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+          fontLoaded = true;
+          layoutTextPage();
+        });
+      }
+      layoutTextPage();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      layoutTextPage();
+    }
+
+    // Double-click anywhere to subtly cycle between 3 kinetic text behaviors
+    function doubleClicked() {
+      kineticMode = (kineticMode + 1) % 3;
+      // Give all characters a gentle celebratory pulse on mode switch
+      for (let i = 0; i < glyphs.length; i++) {
+        glyphs[i].vy -= random(2, 6);
+        glyphs[i].vx += random(-3, 3);
+      }
+    }
+
+    // Parses MY_TEXT into wrapped lines and creates a physics particle for every character
+    function layoutTextPage() {
+      glyphs = [];
+
+      const vw = windowWidth;
+      const vh = windowHeight;
+
+      // Responsive margins & typography sizing
+      const marginX = constrain(vw * 0.11, 28, 180);
+      const maxLineWidth = vw - marginX * 2;
+
+      // Automatically scale font size based on screen size and total text length
+      const charCount = MY_TEXT.length;
+      let baseSize = constrain(vw * 0.021, 17, 32);
+      if (charCount > 650) baseSize = constrain(vw * 0.017, 14, 25);
+      if (charCount < 180) baseSize = constrain(vw * 0.032, 22, 42);
+
+      const lineHeight = baseSize * 1.68;
+      const paragraphGap = baseSize * 1.15;
+
+      textFont(CONFIG.fontFamily);
+      textStyle(BOLD);
+      textSize(baseSize);
+      drawingContext.font = `${CONFIG.fontWeight} ${baseSize}px "${CONFIG.fontFamily}", monospace`;
+
+      // Split into paragraphs first, then word-wrap each paragraph
+      const rawParagraphs = MY_TEXT.replace(/\r\n/g, '\n').split('\n');
+      let wrappedLines = [];
+
+      for (let pIndex = 0; pIndex < rawParagraphs.length; pIndex++) {
+        const para = rawParagraphs[pIndex].trim();
+
+        if (para === '') {
+          wrappedLines.push({ text: '', isGap: true });
+          continue;
+        }
+
+        const words = para.split(/\s+/);
+        let currentLine = '';
+
+        for (let w = 0; w < words.length; w++) {
+          const word = words[w];
+          const testLine = currentLine === '' ? word : currentLine + ' ' + word;
+
+          if (textWidth(testLine) > maxLineWidth && currentLine !== '') {
+            wrappedLines.push({ text: currentLine, isGap: false });
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
+        }
+
+        if (currentLine !== '') {
+          wrappedLines.push({ text: currentLine, isGap: false });
+        }
+      }
+
+      // Calculate total vertical height of the text block
+      let totalTextHeight = 0;
+      for (let i = 0; i < wrappedLines.length; i++) {
+        totalTextHeight += wrappedLines[i].isGap ? paragraphGap : lineHeight;
+      }
+
+      // Vertically center the text if it fits in the viewport; otherwise expand canvas height to scroll
+      const minCanvasHeight = Math.max(vh, totalTextHeight + marginX * 2);
+      if (height !== minCanvasHeight) {
+        resizeCanvas(vw, minCanvasHeight, true);
+      }
+
+      let cursorY = Math.max(marginX, (height - totalTextHeight) * 0.5) + baseSize * 0.8;
+
+      // Instantiate individual character physics nodes
+      for (let i = 0; i < wrappedLines.length; i++) {
+        const lineObj = wrappedLines[i];
+        if (lineObj.isGap) {
+          cursorY += paragraphGap;
+          continue;
+        }
+
+        let cursorX = marginX;
+        const str = lineObj.text;
+
+        for (let c = 0; c < str.length; c++) {
+          const ch = str[c];
+          const cw = textWidth(ch);
+
+          if (ch !== ' ') {
+            glyphs.push({
+              char: ch,
+              ox: cursorX,
+              oy: cursorY,
+              x: cursorX,
+              y: cursorY,
+              vx: 0,
+              vy: 0,
+              angle: 0,
+              vAngle: 0,
+              size: baseSize,
+              index: glyphs.length
+            });
+          }
+
+          cursorX += cw;
+        }
+
+        cursorY += lineHeight;
+      }
+    }
+
+    function draw() {
+      // 1. BACKGROUND LAYER 1: Exact p5.js "Shapes & Color: Color" scene ( matching your image)
+      drawShapesAndColorBackground();
+
+      // 2. BACKGROUND LAYER 2: Exact p5.js "Transformation: Rotate" (0, 30, 60, 90 clock + sweeping hand) in Top-Right Corner
+      drawTopRightRotateElement();
+
+      // 3. FOREGROUND LAYER: Full-Page Kinetic Typography Engine
+      renderKineticBodyText();
+    }
+
+    // ----------------------------------------------------------------------------
+    // LAYER 1 (BACKGROUND): p5.js "Shapes and Color: Color" Example
+    // Directly renders the steelblue background and colored geometric primitives
+    // from https://p5js.org/examples/Shapes-And-Color-Color/ scaled across the page.
+    // ----------------------------------------------------------------------------
+    function drawShapesAndColorBackground() {
+      push();
+      colorMode(RGB, 255);
+      angleMode(DEGREES);
+
+      // CSS color name background from the example
+      background('steelblue');
+
+      // Scale the original 720x400 p5 example coordinate space to fill the screen
+      const scaleX = width / 720;
+      const scaleY = height / 400;
+      scale(scaleX, scaleY);
+
+      // Set width of stroke to 4 units
+      strokeWeight(4);
+
+      // Light blue fill + Dark blue stroke square
+      fill(200, 200, 255);
+      stroke(20, 20, 100);
+      square(20, 20, 100);
+
+      // Dark red stroke rectangle (uses last set light blue fill)
+      stroke(100, 20, 20);
+      rect(100, 40, 200, 100);
+
+      // Hue, saturation, and brightness values (HSB) for the top-right eye-like ellipse
+      colorMode(HSB, 360, 100, 100);
+
+      // Light green ellipse with dark green stroke
+      fill(120, 70, 90);
+      stroke(120, 60, 30);
+      ellipse(540, 100, 300, 100);
+
+      // Dark fuchsia inner circle without lines
+      fill(300, 90, 30);
+      noStroke();
+      circle(560, 100, 100);
+
+      // Hue, saturation, and lightness values (HSL) for the upper chord arc
+      colorMode(HSL, 360, 100, 100);
+      fill(120, 70, 90);
+      stroke(120, 60, 30);
+      arc(540, 100, 300, 100, 180, 360, CHORD);
+
+      // Save current HSL settings, draw RGB navy line, then restore HSL for triangle
+      push();
+      colorMode(RGB, 255);
+      stroke(20, 10, 80);
+      line(20, 200, 200, 350);
+      pop();
+
+      // Triangle uses the restored HSL light green fill & dark green stroke
+      triangle(250, 350, 350, 200, 450, 350);
+
+      // Hex string stroke quad without inner color
+      stroke('#EFD8D8');
+      noFill();
+      quad(500, 250, 550, 200, 700, 300, 650, 350);
+
+      pop();
+    }
+
+    // ----------------------------------------------------------------------------
+    // LAYER 2 (TOP-RIGHT CORNER, BEHIND TEXT): p5.js "Transformation: Rotate"
+    // Directly implements the 0, 30, 60, 90 degree lines + numbers and rotating
+    // clock hand from https://p5js.org/examples/Transformation-Rotate/
+    // anchored in the top-right corner of the page.
+    // ----------------------------------------------------------------------------
+    function drawTopRightRotateElement() {
+      push();
+      angleMode(DEGREES);
+      colorMode(HSB, 360, 100, 100, 100);
+
+      // Position the origin of the clock in the top-right corner
+      const radiusScale = constrain(min(width, height) / 900, 0.55, 1.05);
+      const originX = width - 210 * radiusScale;
+      const originY = 85 * radiusScale;
+      const lineLen = 135 * radiusScale;
+      const labelDist = 158 * radiusScale;
+
+      textFont('JetBrains Mono');
+      textStyle(BOLD);
+      textSize(18 * radiusScale);
+      textAlign(CENTER, CENTER);
+
+      // Loop through angles 0, 30, 60, 90 degrees (exact p5 Rotate example)
+      for (let angle = 0; angle <= 90; angle += 30) {
+        push();
+        translate(originX, originY);
+        rotate(angle);
+
+        // Set color based on angle and draw line along x-axis
+        stroke(angle + 100, 85, 95);
+        strokeWeight(5 * radiusScale);
+        line(0, 0, lineLen, 0);
+
+        // Display the angle (0, 30, 60, 90)
+        noStroke();
+        fill(0, 0, 100);
+        text(angle, labelDist, 0);
+        pop();
+      }
+
+      // Draw the animated sweeping clock hand
+      push();
+      translate(originX, originY);
+      rotate(frameCount * 0.6);
+      stroke(0, 0, 100);
+      strokeWeight(5 * radiusScale);
+      line(0, 0, lineLen, 0);
+
+      // Subtle center pivot cap
+      noStroke();
+      fill(0, 0, 100);
+      circle(0, 0, 9 * radiusScale);
+      pop();
+
+      pop();
+    }
+
+    // ----------------------------------------------------------------------------
+    // LAYER 3 (FOREGROUND): Full-Page Kinetic Typography Engine
+    // Every character in your text reacts smoothly as the cursor passes over sentences
+    // ----------------------------------------------------------------------------
+    function renderKineticBodyText() {
+      push();
+      angleMode(RADIANS);
+      colorMode(HSB, 360, 100, 100, 100);
+      textFont(CONFIG.fontFamily);
+      textStyle(BOLD);
+      textAlign(LEFT, BASELINE);
+      strokeJoin(ROUND);
+
+      const radius = CONFIG.repelRadius;
+      const radiusSq = radius * radius;
+      const mouseVx = constrain(mouseX - pmouseX, -28, 28);
+      const mouseVy = constrain(mouseY - pmouseY, -28, 28);
+      const t = frameCount * 0.035;
+
+      for (let i = 0; i < glyphs.length; i++) {
+        const g = glyphs[i];
+
+        const dx = g.x - mouseX;
+        const dy = g.y - mouseY;
+        const distSq = dx * dx + dy * dy;
+
+        // Cursor proximity interaction
+        if (distSq < radiusSq && distSq > 0.001) {
+          const d = sqrt(distSq);
+          const falloff = pow(1 - d / radius, 1.6);
+
+          if (kineticMode === 0) {
+            // Mode 0: Elastic Ripple + Cursor Wake
+            const pushAngle = atan2(dy, dx);
+            g.vx += cos(pushAngle) * falloff * CONFIG.repelStrength + mouseVx * falloff * 0.18;
+            g.vy += sin(pushAngle) * falloff * CONFIG.repelStrength + mouseVy * falloff * 0.18;
+            g.vAngle += (mouseVx * 0.004 - g.angle * 0.1) * falloff;
+          } else if (kineticMode === 1) {
+            // Mode 1: Harmonic Wave Float (characters lift and undulate like water)
+            const waveLift = sin(d * 0.08 - t * 2.5) * 9 * falloff;
+            g.vy += waveLift * 0.25 + mouseVy * falloff * 0.12;
+            g.vx += cos(d * 0.06 - t) * 2.5 * falloff;
+            g.vAngle += sin(t + i * 0.2) * 0.025 * falloff;
+          } else {
+            // Mode 2: Magnetic Swirl / Vortex
+            const swirlAngle = atan2(dy, dx) + HALF_PI;
+            g.vx += cos(swirlAngle) * falloff * 6.5;
+            g.vy += sin(swirlAngle) * falloff * 6.5;
+            g.vAngle += 0.04 * falloff;
+          }
+        }
+
+        // Subtle ambient breathing motion even when cursor is far away
+        const idleBreathY = sin(t * 0.6 + g.ox * 0.012 + g.oy * 0.015) * 0.35;
+
+        // Spring physics pulling each letter back to its exact readable position in the sentence
+        g.vx += (g.ox - g.x) * CONFIG.springStiffness;
+        g.vy += (g.oy + idleBreathY - g.y) * CONFIG.springStiffness;
+        g.vAngle += (0 - g.angle) * CONFIG.springStiffness * 1.2;
+
+        g.vx *= CONFIG.damping;
+        g.vy *= CONFIG.damping;
+        g.vAngle *= CONFIG.damping;
+
+        g.x += g.vx;
+        g.y += g.vy;
+        g.angle += g.vAngle;
+
+        // Measure how far the letter is currently displaced from its resting spot
+        const displacement = abs(g.x - g.ox) + abs(g.y - g.oy);
+
+        textSize(g.size);
+        drawingContext.font = `${CONFIG.fontWeight} ${g.size}px "${CONFIG.fontFamily}", monospace`;
+
+        const outlineW = max(3.5, g.size * 0.16);
+
+        // Snap coordinates to whole pixels at rest for a crisp ASCII bitmap feel
+        const drawX = displacement < 1.2 ? Math.round(g.x) : g.x;
+        const drawY = displacement < 1.2 ? Math.round(g.y) : g.y;
+
+        // Briefly morph strongly displaced letters into raw ASCII symbols before resolving back
+        let displayChar = g.char;
+        if (displacement > 18) {
+          const asciiIdx = Math.floor((frameCount * 0.35 + g.index) % CONFIG.asciiChars.length);
+          displayChar = CONFIG.asciiChars[asciiIdx];
+        }
+
+        push();
+        translate(drawX, drawY);
+        if (abs(g.angle) > 0.003) {
+          // Quantize rotation angle slightly for a stepped digital/ASCII aesthetic
+          rotate(Math.round(g.angle * 14) / 14);
+        }
+
+        // 1. Hard-edged dark terminal block shadow for chunky ASCII depth
+        noStroke();
+        fill(235, 85, 12, 95);
+        text(displayChar, 3, 3);
+
+        // 2. Crisp dark-indigo outer contour stroke so every character reads cleanly
+        stroke(235, 82, 14, 98);
+        strokeWeight(outlineW);
+        strokeJoin(MITER);
+
+        if (displacement > 3.5) {
+          // Shifts from crisp terminal cream to phosphor-green / amber ASCII glow when disturbed
+          const blend = constrain(map(displacement, 3.5, 34, 0, 1), 0, 1);
+          fill(lerp(52, 115, blend), lerp(8, 75, blend), 100);
+        } else {
+          // Crisp, high-contrast warm terminal cream at rest
+          fill(52, 6, 100);
+        }
+
+        text(displayChar, 0, 0);
+        pop();
+      }
+      pop();
+    }
+  </script>
+</body>
+</html>
